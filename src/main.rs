@@ -1,6 +1,10 @@
+// #![feature(proc_macro_hygiene, decl_macro)]
 #[macro_use] extern crate rocket;
 #[macro_use] extern crate diesel;
 #[macro_use] extern crate diesel_migrations;
+// #[macro_use] extern crate rocket_sync_db_pools;
+// #[macro_use] extern crate rocket_contrib;
+
 
 
 
@@ -9,8 +13,10 @@ mod models;
 mod schema;
 mod repositories;
 
-
+// use diesel::connection::*;
+// use diesel_migrations::EmbedMigrations;
 use auth::BasicAuth;
+use diesel_migrations::embed_migrations;
 use models::{Rustacean, NewRustacean};
 
 use rocket::Build;
@@ -21,12 +27,21 @@ use rocket::http::Status;
 use rocket::fairing::AdHoc;
 use rocket_sync_db_pools::database;
 use repositories::RustaceanRepository;
-use diesel_migrations::run_migrations;
+// use diesel_migrations::run_migrations;
+use diesel::SqliteConnection;
 
-#[database("sqlite_logs")]
-struct DBConn(rocket_sync_db_pools::diesel::SqliteConnection);
+embed_migrations!();
 
-// embed_migrations!();
+#[database("sqlite")]
+struct DBConn(SqliteConnection);
+
+impl diesel::connection::SimpleConnection for DBConn {
+    fn batch_execute(&mut self, query: &str) -> diesel::QueryResult<()> {
+        todo!()
+    }
+}
+
+
 
 #[get("/rustaceans")]
 async fn get_rustaceans(_auth: BasicAuth, db: DBConn) -> Result<Value, status::Custom<Value>>  {
@@ -78,16 +93,19 @@ fn not_found() -> Value {
     json!("Not Found!")
 }
 
+
 async fn run_db_migrations(rocket: Rocket<Build>) -> Result<Rocket<Build>, Rocket<Build>> {
     let conn = DBConn::get_one(&rocket).await
         .expect("failed to retrieve database connection");
 
-    conn.run(|c| run_migrations(c, &MIGRATIONS)).await
-        .map(|_| rocket)
-        .map_err(|e| {
+    match embedded_migrations::run(&conn) {
+        Ok(()) => Ok(rocket),
+        Err(e) => {
             println!("Failed to run database migration: {:?}", e);
-            rocket
-        })
+            Err(rocket)
+        }
+    }
+
 }
 
 
